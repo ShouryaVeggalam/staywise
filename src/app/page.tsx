@@ -1,219 +1,148 @@
 import { prisma } from '@/lib/prisma';
 import { format } from 'date-fns';
+import Link from 'next/link';
+import {
+  BedDouble, CalendarCheck, Users, ArrowUpRight, ArrowRight, Wallet,
+  UserCheck, CalendarDays, Activity, RefreshCw, Plus
+} from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 async function getDashboardData() {
   try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const tomorrow = new Date(today);
     tomorrow.setDate(today.getDate() + 1);
 
     const [
-      totalRooms,
-      availableRooms,
-      activeReservations,
-      todayArrivals,
-      todayDepartures,
-      totalPayments,
-      outstanding,
-      totalGuests,
-      recentReservations,
+      totalRooms, activeReservations, totalGuests, arrivalRows, departureRows,
+      payments, billed, recent, rooms
     ] = await Promise.all([
       prisma.room.count(),
-      prisma.room.count({
-        where: {
-          status: 'AVAILABLE',
-          reservations: {
-            none: {
-              status: { in: ['PENDING', 'CONFIRMED', 'CHECKED_IN'] },
-              checkIn: { lt: tomorrow },
-              checkOut: { gt: today },
-            },
-          },
-        },
-      }),
-      prisma.reservation.count({
-        where: { status: { in: ['CONFIRMED', 'CHECKED_IN', 'PENDING'] } },
-      }),
-      prisma.reservation.findMany({
-        where: {
-          checkIn: { gte: today, lt: tomorrow },
-          status: { in: ['CONFIRMED', 'CHECKED_IN'] },
-        },
-        include: { guest: true, room: true },
-        take: 10,
-      }),
-      prisma.reservation.findMany({
-        where: {
-          checkOut: { gte: today, lt: tomorrow },
-          status: 'CHECKED_IN',
-        },
-        include: { guest: true, room: true },
-        take: 10,
-      }),
-      prisma.payment.aggregate({
-        where: { status: 'COMPLETED' },
-        _sum: { amount: true },
-      }),
-      prisma.reservation.aggregate({
-        where: { status: { not: 'CANCELLED' } },
-        _sum: { totalAmount: true },
-      }),
+      prisma.reservation.count({ where: { status: { in: ['CONFIRMED', 'CHECKED_IN', 'PENDING'] } } }),
       prisma.guest.count(),
       prisma.reservation.findMany({
-        orderBy: { createdAt: 'desc' },
-        take: 5,
-        include: { guest: true, room: true },
+        where: { checkIn: { gte: today, lt: tomorrow }, status: { in: ['CONFIRMED', 'CHECKED_IN'] } },
+        include: { guest: true, room: true }, orderBy: { checkIn: 'asc' }, take: 6,
       }),
+      prisma.reservation.findMany({
+        where: { checkOut: { gte: today, lt: tomorrow }, status: 'CHECKED_IN' },
+        include: { guest: true, room: true }, orderBy: { checkOut: 'asc' }, take: 6,
+      }),
+      prisma.payment.aggregate({ where: { status: 'COMPLETED' }, _sum: { amount: true } }),
+      prisma.reservation.aggregate({ where: { status: { not: 'CANCELLED' } }, _sum: { totalAmount: true } }),
+      prisma.reservation.findMany({ orderBy: { createdAt: 'desc' }, take: 6, include: { guest: true, room: true } }),
+      prisma.room.findMany({ include: { roomType: true, reservations: { where: { status: { in: ['PENDING', 'CONFIRMED', 'CHECKED_IN'] }, checkIn: { lt: tomorrow }, checkOut: { gt: today } }, take: 1 } }, take: 5, orderBy: { number: 'asc' } }),
     ]);
 
-    const totalPaid = totalPayments._sum.amount || 0;
-    const totalBilled = outstanding._sum.totalAmount || 0;
-    const outstandingBalance = Number(totalBilled) - Number(totalPaid);
+    const paid = Number(payments._sum.amount ?? 0);
+    const total = Number(billed._sum.totalAmount ?? 0);
+    const blocked = rooms.filter(r => r.status !== 'AVAILABLE' || r.reservations.length > 0).length;
 
     return {
-      totalRooms,
-      availableRooms,
-      activeReservations,
-      todayArrivals: todayArrivals.length,
-      todayDepartures: todayDepartures.length,
-      paymentsCollected: Number(totalPaid),
-      outstandingBalances: outstandingBalance,
-      registeredGuests: totalGuests,
-      arrivals: todayArrivals,
-      departures: todayDepartures,
-      recent: recentReservations,
-      dbReady: true,
+      dbReady: true, totalRooms, activeReservations, totalGuests, arrivals: arrivalRows,
+      departures: departureRows, recent, rooms, availableRooms: Math.max(0, totalRooms - blocked),
+      paymentsCollected: paid, outstandingBalances: Math.max(0, total - paid),
     };
   } catch (error) {
-    console.error('Dashboard query failed (tables may not exist yet):', error);
-    return {
-      totalRooms: 0,
-      availableRooms: 0,
-      activeReservations: 0,
-      todayArrivals: 0,
-      todayDepartures: 0,
-      paymentsCollected: 0,
-      outstandingBalances: 0,
-      registeredGuests: 0,
-      arrivals: [],
-      departures: [],
-      recent: [],
-      dbReady: false,
-    };
+    console.error('Staywise dashboard database query failed:', error);
+    return { dbReady: false, totalRooms: 0, activeReservations: 0, totalGuests: 0, arrivals: [], departures: [], recent: [], rooms: [], availableRooms: 0, paymentsCollected: 0, outstandingBalances: 0 };
   }
+}
+
+const money = (value: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(value);
+const dateLabel = (value: Date) => format(value, 'dd MMM');
+
+function Status({ value }: { value: string }) {
+  return <span className={`status-pill status-${value.toLowerCase()}`}>{value.replaceAll('_', ' ')}</span>;
 }
 
 export default async function Dashboard() {
   const data = await getDashboardData();
 
   const metrics = [
-    { label: 'Total Rooms', value: data.totalRooms },
-    { label: 'Available Today', value: data.availableRooms },
-    { label: 'Active Reservations', value: data.activeReservations },
-    { label: "Today's Arrivals", value: data.todayArrivals },
-    { label: "Today's Departures", value: data.todayDepartures },
-    { label: 'Payments Collected', value: `$${data.paymentsCollected.toFixed(2)}` },
-    { label: 'Outstanding', value: `$${data.outstandingBalances.toFixed(2)}` },
-    { label: 'Guests', value: data.registeredGuests },
+    { label: 'Total rooms', value: data.dbReady ? data.totalRooms.toString() : '—', foot: 'Physical room inventory', color: '#c89543', icon: BedDouble },
+    { label: 'Available today', value: data.dbReady ? data.availableRooms.toString() : '—', foot: 'Ready for a new stay', color: '#20a36b', icon: CalendarCheck },
+    { label: 'Active reservations', value: data.dbReady ? data.activeReservations.toString() : '—', foot: 'Pending, confirmed or in-house', color: '#4285ee', icon: CalendarDays },
+    { label: 'Registered guests', value: data.dbReady ? data.totalGuests.toString() : '—', foot: 'Guest directory', color: '#8c70db', icon: Users },
+    { label: 'Payments collected', value: data.dbReady ? money(data.paymentsCollected) : '—', foot: 'Recorded completed payments', color: '#20a36b', icon: Wallet },
+    { label: 'Outstanding balance', value: data.dbReady ? money(data.outstandingBalances) : '—', foot: 'Estimated unpaid amount', color: '#e16a5c', icon: Activity },
   ];
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-slate-900">Dashboard</h1>
-        <div className="text-sm text-slate-500">{format(new Date(), 'EEEE, MMMM d, yyyy')}</div>
-      </div>
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {metrics.map((m) => (
-          <div key={m.label} className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm">
-            <p className="text-sm text-slate-500">{m.label}</p>
-            <p className="text-2xl font-semibold mt-1">{m.value}</p>
+      <header className="page-heading">
+        <div>
+          <div className="eyebrow">OVERVIEW / OPERATIONS</div>
+          <h1 className="mt-2">Good evening.</h1>
+          <p>Your hotel, at a glance. Here is what is happening today.</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="hidden sm:block rounded-xl border border-[var(--line)] bg-white px-4 py-2.5 text-right">
+            <div className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Reporting date</div>
+            <div className="text-sm font-semibold mt-1">{format(new Date(), 'EEE, dd MMM yyyy')}</div>
           </div>
-        ))}
-      </div>
+          <Link href="/availability" className="btn"><RefreshCw size={14}/> Availability</Link>
+          <Link href="/book" className="btn btn-primary"><Plus size={15}/> New booking</Link>
+        </div>
+      </header>
 
-      <div className="grid md:grid-cols-2 gap-6">
-        <div className="bg-white rounded-xl border p-5">
-          <h2 className="font-semibold mb-4">Today's Arrivals</h2>
-          {data.arrivals.length === 0 ? (
-            <p className="text-slate-500 text-sm">No arrivals today</p>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-slate-500 border-b">
-                  <th className="pb-2">Guest</th>
-                  <th>Room</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.arrivals.map((a) => (
-                  <tr key={a.id} className="border-b last:border-0">
-                    <td className="py-2">{a.guest.firstName} {a.guest.lastName}</td>
-                    <td>{a.room.number}</td>
-                    <td><span className="px-2 py-0.5 bg-green-100 text-green-800 rounded text-xs">{a.status}</span></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+      {!data.dbReady && <div className="notice notice-error"><strong>Database query failed.</strong> Dashboard values are unavailable. Check the deployed environment variables and Vercel function logs; zeros are not being presented as real metrics.</div>}
+
+      <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+        {metrics.map((m) => {
+          const Icon = m.icon;
+          return <div key={m.label} className="metric-card" style={{ '--metric-color': m.color } as React.CSSProperties}>
+            <div className="flex items-center justify-between gap-3">
+              <p className="metric-label">{m.label}</p>
+              <div className="w-8 h-8 rounded-lg bg-slate-50 border border-slate-100 text-slate-500 flex items-center justify-center"><Icon size={15}/></div>
+            </div>
+            <p className="metric-value">{m.value}</p>
+            <p className="metric-foot">{m.foot}</p>
+          </div>;
+        })}
+      </section>
+
+      <section className="grid grid-cols-1 xl:grid-cols-[1.4fr_1fr] gap-5">
+        <div className="panel overflow-hidden">
+          <div className="panel-head">
+            <div><h2>Today at the front desk</h2><p>Arrivals scheduled for today</p></div>
+            <Link href="/reservations" className="text-xs font-semibold text-[#a6762c] flex items-center gap-1">All reservations <ArrowUpRight size={14}/></Link>
+          </div>
+          {data.arrivals.length ? <div className="overflow-x-auto"><table className="data-table">
+            <thead><tr><th>Guest</th><th>Room</th><th>Arrival</th><th>Status</th></tr></thead>
+            <tbody>{data.arrivals.map(a => <tr key={a.id}><td><div className="font-semibold text-slate-800">{a.guest.firstName} {a.guest.lastName}</div><div className="text-[10px] text-slate-400">{a.reference}</div></td><td>{a.room.number}</td><td>{format(a.checkIn, 'hh:mm a')}</td><td><Status value={a.status}/></td></tr>)}</tbody>
+          </table></div> : <div className="empty-state"><div className="mx-auto w-10 h-10 rounded-full bg-slate-50 flex items-center justify-center"><UserCheck size={18}/></div><strong>No arrivals scheduled today</strong><span className="text-xs">New arrivals will appear here automatically.</span></div>}
         </div>
 
-        <div className="bg-white rounded-xl border p-5">
-          <h2 className="font-semibold mb-4">Today's Departures</h2>
-          {data.departures.length === 0 ? (
-            <p className="text-slate-500 text-sm">No departures today</p>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-slate-500 border-b">
-                  <th className="pb-2">Guest</th>
-                  <th>Room</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.departures.map((d) => (
-                  <tr key={d.id} className="border-b last:border-0">
-                    <td className="py-2">{d.guest.firstName} {d.guest.lastName}</td>
-                    <td>{d.room.number}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+        <div className="panel overflow-hidden">
+          <div className="panel-head"><div><h2>Room inventory</h2><p>Availability and operational status</p></div><Link href="/rooms" className="text-xs font-semibold text-[#a6762c] flex items-center gap-1">Manage <ArrowUpRight size={14}/></Link></div>
+          {data.rooms.length ? <div className="divide-y divide-slate-100">{data.rooms.map(room => {
+            const busy = room.reservations.length > 0;
+            const status = room.status !== 'AVAILABLE' ? room.status : busy ? 'OCCUPIED' : 'AVAILABLE';
+            return <div key={room.id} className="flex items-center gap-3 px-5 py-3.5">
+              <div className="w-10 h-10 rounded-xl bg-[#fbf4e8] text-[#a6762c] flex items-center justify-center"><BedDouble size={17}/></div>
+              <div className="min-w-0 flex-1"><div className="font-semibold text-sm">Room {room.number}</div><div className="text-[11px] text-slate-500">{room.roomType.name} · Floor {room.floor}</div></div>
+              <div className="text-right"><Status value={status}/><div className="mt-1 text-[10px] text-slate-400">{money(Number(room.nightlyRate))}/night</div></div>
+            </div>;
+          })}</div> : <div className="empty-state"><div className="mx-auto w-10 h-10 rounded-full bg-slate-50 flex items-center justify-center"><BedDouble size={18}/></div><strong>No rooms to display</strong><span className="text-xs">Add room inventory to see live status.</span><div className="mt-4"><Link className="btn" href="/rooms">Manage rooms <ArrowRight size={14}/></Link></div></div>}
         </div>
-      </div>
+      </section>
 
-      <div className="bg-white rounded-xl border p-5">
-        <h2 className="font-semibold mb-4">Recent Reservations</h2>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-slate-500 border-b">
-              <th className="pb-2">Ref</th>
-              <th>Guest</th>
-              <th>Room</th>
-              <th>Dates</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.recent.map((r) => (
-              <tr key={r.id} className="border-b last:border-0">
-                <td className="py-2 font-mono text-xs">{r.reference}</td>
-                <td>{r.guest.firstName} {r.guest.lastName}</td>
-                <td>{r.room.number}</td>
-                <td>{format(r.checkIn, 'MMM d')} - {format(r.checkOut, 'MMM d')}</td>
-                <td><span className="px-2 py-0.5 bg-slate-100 rounded text-xs">{r.status}</span></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <section className="panel overflow-hidden">
+        <div className="panel-head"><div><h2>Recent reservations</h2><p>Latest activity across your property</p></div><Link href="/reservations" className="btn">View all <ArrowRight size={14}/></Link></div>
+        {data.recent.length ? <div className="overflow-x-auto"><table className="data-table">
+          <thead><tr><th>Reference</th><th>Guest</th><th>Room</th><th>Stay dates</th><th>Total</th><th>Status</th></tr></thead>
+          <tbody>{data.recent.map(r => <tr key={r.id}><td className="font-mono font-semibold text-xs text-slate-500">{r.reference}</td><td className="font-semibold text-slate-800">{r.guest.firstName} {r.guest.lastName}</td><td>{r.room.number}</td><td>{dateLabel(r.checkIn)} – {dateLabel(r.checkOut)}</td><td className="font-semibold">{money(Number(r.totalAmount))}</td><td><Status value={r.status}/></td></tr>)}</tbody>
+        </table></div> : <div className="empty-state"><div className="mx-auto w-10 h-10 rounded-full bg-slate-50 flex items-center justify-center"><ClipboardList size={18}/></div><strong>No reservations yet</strong><span className="text-xs">Your confirmed and upcoming stays will appear here.</span><div className="mt-4"><Link className="btn btn-primary" href="/book"><Plus size={14}/> Create first booking</Link></div></div>}
+      </section>
+
+      <section className="panel p-5 flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center"><Activity size={18}/></div><div><div className="font-semibold text-sm">Front desk overview</div><div className="text-xs text-slate-500">{data.dbReady ? 'Connected to live database queries' : 'Database data could not be loaded'}</div></div></div>
+        <div className="text-xs text-slate-400">Updated {format(new Date(), 'hh:mm a')}</div>
+      </section>
     </div>
   );
 }
