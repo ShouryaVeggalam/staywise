@@ -3,7 +3,7 @@ import { format } from 'date-fns';
 import Link from 'next/link';
 import {
   BedDouble, CalendarCheck, Users, ArrowUpRight, ArrowRight, Wallet,
-  UserCheck, CalendarDays, Activity, RefreshCw, Plus
+  UserCheck, CalendarDays, Activity, RefreshCw, Plus, ClipboardList
 } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
