@@ -1,0 +1,138 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model RoomType {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique @db.VarChar(100)
+  description String?  @db.Text
+  baseRate    Decimal  @db.Decimal(10, 2)
+  capacity    Int
+  amenities   String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  rooms       Room[]
+}
+
+model Room {
+  id           Int      @id @default(autoincrement())
+  number       String   @unique @db.VarChar(20)
+  floor        Int
+  roomTypeId   Int
+  roomType     RoomType @relation(fields: [roomTypeId], references: [id])
+  nightlyRate  Decimal  @db.Decimal(10, 2)
+  status       String   @default("AVAILABLE") @db.VarChar(30)
+  notes        String?  @db.Text
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  reservations Reservation[]
+  maintenances RoomMaintenance[]
+
+  @@index([status])
+  @@index([roomTypeId])
+}
+
+model Guest {
+  id           Int      @id @default(autoincrement())
+  firstName    String   @db.VarChar(100)
+  lastName     String   @db.VarChar(100)
+  email        String?  @unique @db.VarChar(255)
+  phone        String?  @db.VarChar(50)
+  address      String?  @db.Text
+  idNumber     String?  @db.VarChar(100)
+  notes        String?  @db.Text
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  reservations Reservation[]
+
+  @@index([lastName])
+}
+
+model Reservation {
+  id                   Int      @id @default(autoincrement())
+  reference            String   @unique @db.VarChar(50)
+  guestId              Int
+  guest                Guest    @relation(fields: [guestId], references: [id])
+  roomId               Int
+  room                 Room     @relation(fields: [roomId], references: [id])
+  checkIn              DateTime
+  checkOut             DateTime
+  adults               Int      @default(1)
+  children             Int      @default(0)
+  status               String   @default("PENDING") @db.VarChar(30)
+  nightlyRate          Decimal  @db.Decimal(10, 2)
+  nights               Int
+  subtotal             Decimal  @db.Decimal(10, 2)
+  taxRate              Decimal  @db.Decimal(5, 2) @default(0.10)
+  taxAmount            Decimal  @db.Decimal(10, 2)
+  totalAmount          Decimal  @db.Decimal(10, 2)
+  notes                String?  @db.Text
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  payments             Payment[]
+  statusHistory        ReservationStatusHistory[]
+
+  @@index([status])
+  @@index([checkIn, checkOut])
+  @@index([roomId, status])
+  @@index([guestId])
+}
+
+model Payment {
+  id              Int         @id @default(autoincrement())
+  reservationId   Int
+  reservation     Reservation @relation(fields: [reservationId], references: [id])
+  amount          Decimal     @db.Decimal(10, 2)
+  method          String      @db.VarChar(30)
+  status          String      @default("COMPLETED") @db.VarChar(30)
+  paymentDate     DateTime    @default(now())
+  providerRef     String?     @db.VarChar(255)
+  notes           String?     @db.Text
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([reservationId])
+  @@index([status])
+}
+
+model ReservationStatusHistory {
+  id            Int         @id @default(autoincrement())
+  reservationId Int
+  reservation   Reservation @relation(fields: [reservationId], references: [id])
+  oldStatus     String?     @db.VarChar(30)
+  newStatus     String      @db.VarChar(30)
+  changedBy     String?     @db.VarChar(100)
+  reason        String?     @db.Text
+  createdAt     DateTime    @default(now())
+
+  @@index([reservationId])
+}
+
+model RoomMaintenance {
+  id        Int      @id @default(autoincrement())
+  roomId    Int
+  room      Room     @relation(fields: [roomId], references: [id])
+  startDate DateTime
+  endDate   DateTime?
+  reason    String   @db.Text
+  status    String   @default("ACTIVE") @db.VarChar(30)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([roomId, status])
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique @db.VarChar(255)
+  name      String   @db.VarChar(150)
+  password  String   @db.VarChar(255)
+  role      String   @default("FRONT_DESK") @db.VarChar(30)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
