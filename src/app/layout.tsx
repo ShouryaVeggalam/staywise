@@ -6,17 +6,19 @@ import Sidebar from '@/components/Sidebar';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Staywise - Hotel Management',
-  description: 'Premium hotel booking and operations system',
+  title: 'Staywise | Hotel Operations',
+  description: 'A considered workspace for hotel reservations, room inventory, guest services, and reporting.',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <body className={inter.className}>
-        <div className="flex h-screen bg-slate-50">
+        <div className="app-shell">
           <Sidebar />
-          <main className="flex-1 overflow-auto p-6">{children}</main>
+          <main className="app-main">
+            <div className="mx-auto w-full max-w-[1600px]">{children}</div>
+          </main>
         </div>
       </body>
     </html>
